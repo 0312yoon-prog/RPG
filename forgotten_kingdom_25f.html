@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>잊혀진 왕국 - 25층 도트 RPG</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#141c28;color:#f0e9dd;font-family:system-ui,sans-serif}main{max-width:760px;margin:auto;padding:18px}h1{font-size:23px;margin:0 0 6px}.subtitle{color:#aab6c3;font-size:13px;margin:0 0 16px}.top,.stats,.controls,.bottom{display:flex;justify-content:space-between;gap:12px;align-items:center}.top{margin-bottom:12px}.stats>div{flex:1}.bar{height:10px;background:#3b4050;border-radius:5px;overflow:hidden}.fill{height:100%;transition:width .15s}#hpFill{background:#e47781}#xpFill{background:#e5bb6c}.caption{display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px}.chips{display:flex;justify-content:space-between;gap:4px;flex-wrap:wrap;font-size:13px;margin:12px 0}canvas{width:100%;height:auto;display:block;image-rendering:pixelated;background:#1c2936;border-radius:8px;touch-action:none}.message{margin:12px 0;background:#253141;border:1px solid #445162;border-radius:8px;padding:12px;min-height:48px}.controls{margin-top:12px}.pad{display:grid;grid-template-columns:repeat(3,48px);gap:4px}.buttons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-width:290px;flex:1}button{background:#283746;color:#f6f2e9;border:1px solid #566476;padding:12px 8px;border-radius:8px;cursor:pointer;font-weight:700;touch-action:manipulation}button:active{background:#55745d}.primary{background:#426c52}.reset{background:#78515b}.bottom{margin-top:10px}.help{font-size:12px;color:#adbac6;margin-top:12px}@media(max-width:460px){main{padding:10px}.pad{grid-template-columns:repeat(3,40px)}.buttons button{font-size:12px;padding:9px 3px}}
+</style>
+</head>
+<body><main>
+<div class="top"><div><h1>⚔️ 잊혀진 왕국</h1><p class="subtitle">25 FLOOR DUNGEON · BALANCE PATCH 1.1</p></div><div style="text-align:right"><b id="floorText">1 / 25F</b><div id="zoneText" class="subtitle">슬라임 숲</div></div></div>
+<div class="stats"><div><div class="caption"><b>❤️ HP</b><span id="hpText">45 / 45</span></div><div class="bar"><div class="fill" id="hpFill"></div></div></div><div><div class="caption"><b>✨ EXP</b><span id="xpText">0 / 30</span></div><div class="bar"><div class="fill" id="xpFill"></div></div></div></div>
+<div class="chips"><span id="levelText">Lv.1</span><span id="atkText">⚔️ 7</span><span id="potText">🧪 3</span><span id="cpText">🚩 1F</span><span id="leftText">👾 3</span></div>
+<canvas id="game" width="480" height="320"></canvas>
+<div class="chips"><span id="enemyText">슬라임</span><span id="bossText">다음 보스: 5F</span></div>
+<div class="message" id="message" role="status">몬스터를 처치하고 25층까지 도전하자!</div>
+<div class="controls"><div class="pad"><span></span><button data-move="up">▲</button><span></span><button data-move="left">◀</button><button data-move="down">▼</button><button data-move="right">▶</button></div><div class="buttons"><button id="attack" class="primary">⚔️ 공격</button><button id="magic">✨ 마법</button><button id="potion">🧪 포션</button><button id="next">🚪 다음 층</button></div></div>
+<div class="bottom"><button id="reset" class="reset">↻ 던전 초기화 (R)</button><button id="revive">❤️ 체크포인트 부활 (Y)</button></div>
+<p class="help">WASD / 방향키 이동 · Space 공격 · F 마법 · Q 포션 · E 계단 · R 리셋 · Y 부활</p>
+</main>
+<script>
+(()=>{
+'use strict';
+const canvas=document.getElementById('game'),g=canvas.getContext('2d');g.imageSmoothingEnabled=false;
+const T=32,$=id=>document.getElementById(id);
+const map=["###############","#.............#","#.............#","#...##........#","#.............#","#.............#","#.........##..#","#.............#","#.............#","###############"];
+const zones=[
+ {name:'슬라임 숲',base:'슬라임',ground:'#769e68',wall:'#395c48'},
+ {name:'늑대 동굴',base:'늑대',ground:'#887a72',wall:'#484650'},
+ {name:'고대 유적',base:'골렘',ground:'#8d9198',wall:'#414855'},
+ {name:'망령의 성',base:'망령',ground:'#6c668a',wall:'#39354f'},
+ {name:'용의 성채',base:'드래곤',ground:'#8a6064',wall:'#513842'}
+];
+const ranks=['','전투 ','정예 ','광폭 '];
+const bosses=['거대 슬라임 킹','달빛 늑대왕','고대 유적 수호자','저주받은 망령왕','심연의 드래곤'];
+// 모든 몬스터가 벽이 아닌 곳에서 시작하도록 지정
+const positions=[[5,2],[8,2],[5,5],[8,6],[11,4],[11,7]];
+let player,floor,checkpoint,mobs,frame=0,slash=0,attackCD=0,magicCD=0,dead=false,won=false,effects=[];
+const say=s=>$('message').textContent=s;
+function rect(x,y,w,h,color){g.fillStyle=color;g.fillRect(Math.round(x),Math.round(y),w,h)}
+function label(s,x,y,size,color){g.fillStyle=color;g.font=`bold ${size}px monospace`;g.textAlign='center';g.fillText(s,x,y);g.textAlign='left'}
+function zone(){return zones[Math.floor((floor-1)/5)]}
+function isBoss(){return floor%5===0}
+function mobName(){return isBoss()?bosses[floor/5-1]:ranks[(floor-1)%5]+zone().base}
+function alive(){return mobs.filter(m=>m.hp>0)}
+// 기존 레벨×20보다 50% 증가한 레벨×30
+function requiredXP(){return player.level*30}
+function hud(){
+ $('floorText').textContent=`${floor} / 25F`;$('zoneText').textContent=zone().name;
+ $('levelText').textContent=`Lv.${player.level}`;$('atkText').textContent='⚔️ '+player.atk;
+ $('potText').textContent='🧪 '+player.potions;$('cpText').textContent='🚩 '+checkpoint+'F';
+ $('leftText').textContent='👾 '+alive().length;$('hpText').textContent=player.hp+' / '+player.maxHP;
+ $('hpFill').style.width=(100*player.hp/player.maxHP)+'%';$('xpText').textContent=player.xp+' / '+requiredXP();
+ $('xpFill').style.width=Math.min(100,100*player.xp/requiredXP())+'%';
+ $('enemyText').textContent='등장: '+mobName();$('bossText').textContent=isBoss()?'👑 보스 전투':'다음 보스: '+Math.ceil(floor/5)*5+'F';
+}
+function spawn(){
+ const b=isBoss(),stage=floor,group=Math.floor((stage-1)/5),count=b?1:Math.min(6,3+Math.floor((stage-1)%5/2));
+ mobs=Array.from({length:count},(_,i)=>{
+  const pos=b?[7,4]:positions[i];
+  const baseHP=b?50+stage*11:8+stage*5+group*6;
+  const baseATK=b?5+stage*1.2:1+Math.floor(stage*.55);
+  // 일반: 체력 +15%, 공격력 +20%; 보스: 체력 +20%, 공격력 +15%
+  const hp=Math.ceil(baseHP*(b?1.20:1.15)),atk=Math.ceil(baseATK*(b?1.15:1.20));
+  return{x:pos[0],y:pos[1],hp,maxHP:hp,atk,xp:b?stage*13:6+stage*3,kind:group,boss:b,name:mobName(),flash:0,id:i};
+ });
+ player.x=2;player.y=7;player.dir='right';dead=false;attackCD=0;magicCD=0;effects=[];hud();
+}
+function start(){player={x:2,y:7,dir:'right',hp:45,maxHP:45,level:1,xp:0,atk:7,potions:3};floor=1;checkpoint=1;won=false;spawn();say('1층 시작! 5층마다 보스를 처치하고 체크포인트를 확보하세요.');}
+function blocked(x,y){return map[y]?.[x]!=='.'||alive().some(m=>m.x===x&&m.y===y)}
+function move(dx,dy){
+ if(dead||won)return;player.dir=dx<0?'left':dx>0?'right':dy<0?'up':'down';
+ const x=player.x+dx,y=player.y+dy;
+ if(blocked(x,y)){if(alive().some(m=>m.x===x&&m.y===y))say(mobName()+'이 길을 막고 있어. 공격해!');return}
+ player.x=x;player.y=y;if(x===13&&y===8)nextFloor();
+}
+function levelup(){let leveled=false;while(player.xp>=requiredXP()){player.xp-=requiredXP();player.level++;player.maxHP+=8;player.atk+=2;player.hp=player.maxHP;leveled=true}return leveled}
+function hit(m,damage){
+ m.hp=Math.max(0,m.hp-damage);m.flash=10;effects.push({x:m.x*T+16,y:m.y*T,life:36,label:'-'+damage});
+ if(m.hp===0){
+  player.xp+=m.xp;const leveled=levelup();
+  if(m.boss){player.potions+=2;checkpoint=floor===25?25:floor+1;player.hp=player.maxHP;
+   if(floor===25){won=true;say('🏆 25층 최종 보스 처치! 던전 정복 성공!')}
+   else say(`👑 ${floor}층 보스 처치! ${checkpoint}층 체크포인트 저장, 포션 +2, 체력 회복!`);
+  }else if(leveled)say(`🎉 레벨업! Lv.${player.level}, 공격력 +2, 최대 HP +8`);
+  else if(!alive().length)say(`${floor}층 클리어! 오른쪽 아래 계단으로 이동하자.`);
+  else say(`${m.name} 처치! 경험치 +${m.xp}`);
+ }else say(`${damage} 피해! ${m.name} HP ${m.hp}/${m.maxHP}`);
+ hud();
+}
+function front(){const d={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]}[player.dir];return[player.x+d[0],player.y+d[1]]}
+function attack(){if(dead||won||attackCD>0)return;attackCD=9;slash=10;const [x,y]=front();const target=alive().find(m=>Math.abs(m.x-x)+Math.abs(m.y-y)<=(m.boss?1:0));if(target)hit(target,player.atk);else say('검을 휘둘렀다. 몬스터 바로 옆에서 공격해!')}
+function magic(){if(dead||won||magicCD>0)return;magicCD=43;effects.push({x:player.x*T+16,y:player.y*T+16,life:22,ring:true});const targets=alive().filter(m=>Math.hypot(m.x-player.x,m.y-player.y)<=3);if(!targets.length)say('마법이 빗나갔다.');targets.forEach(m=>hit(m,player.atk+5))}
+function potion(){if(dead||won)return;if(!player.potions){say('포션이 없어! 보스를 처치하면 2개를 얻을 수 있어.');return}if(player.hp===player.maxHP){say('체력이 가득 차 있어.');return}player.potions--;player.hp=Math.min(player.maxHP,player.hp+25);say('포션 사용! HP 25 회복.');hud()}
+function nextFloor(){if(dead||won)return;if(alive().length){say(`몬스터 ${alive().length}마리를 모두 처치해야 해!`);return}if(player.x<11||player.y<7){say('오른쪽 아래의 계단으로 이동해야 해!');return}if(floor>=25)return;floor++;player.hp=Math.min(player.maxHP,player.hp+10);spawn();say(`${floor}층 입장! ${mobName()} 등장!`)}
+// R: 현재까지 확보한 체크포인트에서 몬스터 재생성, 레벨/경험치 유지
+function reset(){floor=checkpoint;won=false;player.hp=player.maxHP;player.potions=Math.max(player.potions,3);spawn();say(`${checkpoint}층부터 초기화! 레벨과 경험치, 공격력 유지.`)}
+// Y: 사망할 때만 체크포인트에서 부활
+function revive(){if(!dead){say('사망한 뒤 Y키로 부활할 수 있어.');return}floor=checkpoint;player.hp=player.maxHP;player.potions=Math.max(1,player.potions);spawn();say(`${checkpoint}층 체크포인트에서 부활했어!`)}
+function hero(x,y){
+ rect(x+10,y+3,12,9,'#303344');rect(x+8,y+5,16,9,'#845845');rect(x+11,y+11,10,8,'#edc391');rect(x+12,y+14,2,2,'#332d41');rect(x+19,y+14,2,2,'#332d41');rect(x+8,y+19,16,8,'#5378ae');rect(x+11,y+19,10,4,'#95c1d8');rect(x+6,y+19,4,7,'#ebbd89');rect(x+23,y+19,4,7,'#ebbd89');rect(x+11,y+26,4,6,'#343b56');rect(x+19,y+26,4,6,'#343b56');
+}
+function monster(m){
+ const x=m.x*T,y=m.y*T+Math.sin(frame/15+m.id)*1.5,t=m.kind;g.save();if(m.flash>0&&frame%4<2)g.globalAlpha=.45;
+ if(t===0){rect(x+5,y+12,22,14,'#2e7955');rect(x+8,y+7,16,17,'#62d59c');rect(x+10,y+10,12,6,'#9af2bb');rect(x+11,y+17,3,3,'#253d4a');rect(x+19,y+17,3,3,'#253d4a')}
+ if(t===1){rect(x+3,y+4,9,13,'#48485b');rect(x+21,y+4,8,13,'#48485b');rect(x+6,y+10,20,17,'#9095a5');rect(x+10,y+13,13,11,'#bec4ce');rect(x+10,y+18,3,3,'#e6b46a');rect(x+20,y+18,3,3,'#e6b46a');rect(x+14,y+22,5,4,'#454559')}
+ if(t===2){rect(x+5,y+7,22,22,'#555767');rect(x+8,y+5,16,22,'#9298a8');rect(x+10,y+11,12,10,'#6e7787');rect(x+11,y+14,3,3,'#f0ca6a');rect(x+20,y+14,3,3,'#f0ca6a')}
+ if(t===3){rect(x+9,y+4,14,5,'#6a4d91');rect(x+6,y+8,20,21,'#876ca9');rect(x+9,y+11,14,15,'#bea5e7');rect(x+11,y+16,4,5,'#3c3453');rect(x+19,y+16,4,5,'#3c3453');rect(x+7,y+27,6,3,'#876ca9')}
+ if(t===4){rect(x+3,y+3,8,14,'#9e4e59');rect(x+21,y+3,8,14,'#9e4e59');rect(x+5,y+11,22,19,'#c56952');rect(x+9,y+13,14,12,'#f1a069');rect(x+10,y+17,4,3,'#f7e0a0');rect(x+19,y+17,4,3,'#f7e0a0');rect(x+12,y+24,9,4,'#713c53')}
+ if(m.boss){g.strokeStyle='#f4c76d';g.lineWidth=2;g.strokeRect(x+2,y+2,28,27);rect(x+14,y-6,4,8,'#f6d784');rect(x+8,y-4,5,5,'#e1b259');rect(x+20,y-4,5,5,'#e1b259')}
+ g.restore();if(m.flash>0)m.flash--;rect(x+2,y-11,28,4,'#282d3b');rect(x+3,y-10,26*m.hp/m.maxHP,2,'#f28f8d');label(m.name,x+16,y-15,m.name.length>9?8:10,'#fff1c7');
+}
+function draw(){
+ const z=zone();for(let y=0;y<10;y++)for(let x=0;x<15;x++){
+  const X=x*T,Y=y*T,s=(x*17+y*23)%11;rect(X,Y,32,32,(x+y)%2===0?z.ground:z.wall);
+  if(map[y][x]==='#'){rect(X,Y,32,32,z.wall);rect(X+2,Y+3,28,8,'#303d4b');rect(X+5,Y+17,22,5,'#293341')}
+  else{rect(X+s+4,Y+22,4,2,'#293d4280');if((x+y)%5===0)rect(X+20,Y+9,3,3,'#e6ddb34b')}
+ }
+ if(floor<25){rect(420,259,24,28,alive().length?'#405263':'#2d9fba');rect(426,262,12,23,alive().length?'#6b7285':'#a3ecf2')}
+ mobs.forEach(m=>{if(m.hp>0)monster(m)});hero(player.x*T,player.y*T);
+ if(slash>0){const d={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]}[player.dir],x=player.x*T+16+d[0]*22,y=player.y*T+16+d[1]*22;g.save();g.translate(x,y);g.rotate((10-slash)*.22);rect(-3,-18,6,25,'#e8f3f5');rect(-6,6,12,4,'#f2d17e');g.restore();slash--}
+ effects=effects.filter(f=>f.life-->0);effects.forEach(f=>{if(f.ring){g.strokeStyle='#acf1ff';g.lineWidth=3;g.beginPath();g.arc(f.x,f.y,(22-f.life)*5,0,Math.PI*2);g.stroke()}else label(f.label,f.x,f.y-(35-f.life),14,'#ffe7a4')});
+ if(dead||won){rect(52,88,376,141,'#172130ed');g.strokeStyle='#edc880';g.lineWidth=3;g.strokeRect(55,91,370,134);label(dead?'GAME OVER':'25F CLEAR!',240,139,24,'#ffe3a0');label(dead?'Y키: 체크포인트 부활':'심연의 드래곤을 처치했다!',240,168,14,'#f9f7ef');label('R키: 레벨 유지하고 다시 사냥',240,190,12,'#d4d9e5')}
+}
+function tick(){
+ frame++;if(attackCD>0)attackCD--;if(magicCD>0)magicCD--;
+ if(!dead&&!won&&frame%78===0){const near=alive().filter(m=>Math.abs(m.x-player.x)+Math.abs(m.y-player.y)<=(m.boss?3:1));if(near.length){const amount=Math.floor(near.reduce((sum,m)=>sum+m.atk,0));player.hp=Math.max(0,player.hp-amount);if(player.hp===0){dead=true;say(`쓰러졌어! Y키로 ${checkpoint}층에서 부활해!`)}else say(`몬스터의 공격! 체력 -${amount}`);hud()}}
+ draw();requestAnimationFrame(tick);
+}
+const moves={w:[0,-1],arrowup:[0,-1],s:[0,1],arrowdown:[0,1],a:[-1,0],arrowleft:[-1,0],d:[1,0],arrowright:[1,0]};
+document.addEventListener('keydown',e=>{const k=e.key.toLowerCase();if(moves[k]||[' ','f','q','e','r','y'].includes(k)){e.preventDefault();if(e.repeat)return;if(moves[k])move(...moves[k]);else({' ':attack,f:magic,q:potion,e:nextFloor,r:reset,y:revive})[k]()}});
+document.querySelectorAll('[data-move]').forEach(b=>b.addEventListener('click',()=>move(...({up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]})[b.dataset.move])));
+$('attack').onclick=attack;$('magic').onclick=magic;$('potion').onclick=potion;$('next').onclick=nextFloor;$('reset').onclick=reset;$('revive').onclick=revive;
+start();tick();
+})();
+</script>
+</body></html>
